@@ -542,6 +542,11 @@ created."
       (persp-set-frame-buffer-predicate frame))
     (run-at-time 0.1 nil #'+workspace/display)))
 
+(defun +workspaces--workspace-same-project (ws project-root)
+  (ignore-errors
+    (file-equal-p (persp-parameter '+workspace-project ws)
+                  project-root)))
+
 ;;;###autoload
 (defun +workspaces-switch-to-project-h (&optional dir)
   "Creates a workspace dedicated to a new project. If one already exists, switch
@@ -563,29 +568,20 @@ This be hooked to `projectile-after-switch-project-hook'."
                (or (eq +workspaces-on-switch-project-behavior t)
                    (+workspace--protected-p (safe-persp-name (get-current-persp)))
                    (+workspace-buffer-list)))
-          (let* ((ws-param '+workspace-project)
-                 (ws (+workspace-get pname t))
+          (let* ((ws (+workspace-get pname t))
                  (ws (if (and ws
-                              (ignore-errors
-                                (file-equal-p (persp-parameter ws-param ws)
-                                              proot)))
+                              (+workspaces--workspace-same-project ws proot))
                          ws
-                       ;; Uniquify the project's name, so we don't clobber a
-                       ;; pre-existing workspace with the same name.
-                       (let* ((parts (nreverse (split-string proot "/" t)))
-                              (pre  (cdr parts))
-                              (post (list (car parts))))
-                         (while (and pre
-                                     (setq ws (+workspace-get (setq pname (string-join post "/")) t))
-                                     (not (ignore-errors
-                                            (file-equal-p (persp-parameter ws-param ws)
-                                                          proot))))
-                           (push (pop pre) post))
-                         (unless pre ws))))
+                       (+workspace-get
+                        ;; Uniquify the project's name, so we don't clobber a
+                        ;; pre-existing workspace with the same name.
+                        (setq pname (or
+                                     (+workspaces-project-unique-name proot)
+                                     proot))
+                        t)))
                  (ws (or ws
-                         (+workspace-get pname t)
                          (+workspace-new pname))))
-            (set-persp-parameter ws-param proot ws)
+            (set-persp-parameter '+workspace-project proot ws)
             (+workspace-switch pname)
             (with-current-buffer (doom-fallback-buffer)
               (setq-local default-directory proot)
@@ -603,6 +599,20 @@ This be hooked to `projectile-after-switch-project-hook'."
           (+workspace-rename (+workspace-current-name) pname))
         (unless current-prefix-arg
           (funcall +workspaces-switch-project-function proot))))))
+
+;;;###autoload
+(defun +workspaces-project-unique-name (project-root)
+  "Find the minimal unique workspace name for a project."
+  (let* ((parts (nreverse (split-string project-root "/" t)))
+         (pre  (cdr parts))
+         (post (list (car parts)))
+         ws)
+    (while (and pre
+                (setq ws (+workspace-get (string-join post "/") t))
+                (not (+workspaces--workspace-same-project ws project-root)))
+      (push (pop pre) post))
+    (unless (and pre ws)
+      (string-join post "/"))))
 
 ;;;###autoload
 (defun +workspaces-save-tab-bar-data-h (&rest _)
